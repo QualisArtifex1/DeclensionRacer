@@ -21,10 +21,12 @@
     canvas {
       border: 2px solid #000;
     }
+    /* Moved the Play Again button to 80% from the top and centered it horizontally */
     #playAgain {
       position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
+      top: 80%;
+      left: 50%;
+      transform: translateX(-50%);
       padding: 10px 20px;
       font-size: 20px;
       display: none;
@@ -55,17 +57,22 @@
     // --- Starfield Background and Trails ---
     let stars = [];
     const numStars = 100;
-    let starTrails = [];         // Array to hold trail points for stars
-    const starTrailLifetime = 500; // Trail lifetime in ms
+    let starTrails = []; // Array to hold trail points for stars
+    const starTrailLifetime = 2000; // Trail lifetime in ms
 
+    // Initialize stars with a chance to be multicolored.
+    // 50% chance for a colored star.
     function initStars() {
       stars = [];
       for (let i = 0; i < numStars; i++) {
+        const starColor = Math.random() < 0.5 ? 
+          "hsl(" + Math.floor(Math.random() * 360) + ", 100%, 80%)" : "white";
         stars.push({
           x: Math.random() * SCREEN_WIDTH,
           y: Math.random() * SCREEN_HEIGHT,
           size: Math.random() * 2 + 1,
-          speed: Math.random() * 0.5 + 0.2
+          speed: Math.random() * 0.5 + 0.2,
+          color: starColor
         });
       }
     }
@@ -78,8 +85,8 @@
           star.y = 0;
           star.x = Math.random() * SCREEN_WIDTH;
         }
-        // Add current star position as a new trail point
-        starTrails.push({ x: star.x, y: star.y, age: 0, size: star.size });
+        // Add current star position as a new trail point (preserving color)
+        starTrails.push({ x: star.x, y: star.y, age: 0, size: star.size, color: star.color });
       });
       // Update and remove old trail points
       for (let i = starTrails.length - 1; i >= 0; i--) {
@@ -94,17 +101,21 @@
       // Draw star trails with fading alpha.
       ctx.save();
       starTrails.forEach(trail => {
-        let alpha = 1 - (trail.age / starTrailLifetime);
-        ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
+        const alpha = 1 - (trail.age / starTrailLifetime);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = trail.color;
         ctx.beginPath();
         ctx.arc(trail.x, trail.y, trail.size, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       });
       ctx.restore();
+      
       // Draw current stars
       ctx.save();
-      ctx.fillStyle = "white";
       stars.forEach(star => {
+        ctx.fillStyle = star.color;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
         ctx.fill();
@@ -154,8 +165,11 @@
     const baseScorePerGate = 10;
 
     // Base speeds and multipliers
-    const baseCarSpeed = 8;
-    const baseRoadScrollSpeed = 5;
+    // Decreased by 15%:
+    //   baseCarSpeed: 19.2 * 0.85 = 16.32
+    //   baseRoadScrollSpeed: 6 * 0.85 = 5.1
+    const baseCarSpeed = 16.32;
+    const baseRoadScrollSpeed = 5.1;
     let levelMultiplier = 1;
     let effectiveMultiplier = 1;
 
@@ -164,13 +178,16 @@
     let roadScrollSpeed = baseRoadScrollSpeed;
     let gateSpeed = roadScrollSpeed;
 
+    // Define lateral sensitivity for smoother car movement.
+    const lateralSensitivity = 0.5;
+
     // Game state variables
     let score = 0;
     let gameOver = false;
     let gameWon = false;
     // Game states: "title", "difficulty", "countdown", "playing", "transition"
     let gameState = "title";
-    let countdownTime = 3000;  // 3-second countdown
+    let countdownTime = 3000; // 3-second countdown
     let startLevelTime = 500;
     let levelTransitionTime = 0;
     let lastTime = performance.now();
@@ -296,7 +313,9 @@
         gameState = "difficulty";
       } else if (gameState === "difficulty" && e.key === "Enter") {
         difficulty = sliderValue;
-        resetGame(false); // Use sliderValue as difficulty.
+        // Calculate difficulty multiplier immediately.
+        difficultyMultiplier = 1 + (difficulty - 1) * 0.1;
+        resetGame(false);
       }
     });
     document.addEventListener("keyup", (e) => { keys[e.key] = false; });
@@ -375,7 +394,7 @@
     }
 
     function drawBackground() {
-      // For title and difficulty screens, we use the parchment pattern.
+      // For title and difficulty screens, use the parchment pattern.
       ctx.fillStyle = parchmentPattern;
       ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
@@ -566,7 +585,7 @@
       carPieces = [];
     }
 
-    // Update loop
+    // Update loop with deltaTime scaling for smooth movement.
     function update(deltaTime) {
       // For title and difficulty screens, update starfield only.
       if (gameState === "title" || gameState === "difficulty") {
@@ -599,12 +618,13 @@
           gameState = "playing";
           startLevelTime = 500;
           document.getElementById("message").innerText = "";
-          levelMultiplier = 1 + currentLevelIndex * 0.1;
-          effectiveMultiplier = difficultyMultiplier * levelMultiplier;
-          carSpeed = baseCarSpeed * effectiveMultiplier;
-          roadScrollSpeed = baseRoadScrollSpeed * effectiveMultiplier;
-          gateSpeed = roadScrollSpeed;
         }
+        // Recalculate speeds on transition based on new level.
+        levelMultiplier = 1 + currentLevelIndex * 0.1;
+        effectiveMultiplier = difficultyMultiplier * levelMultiplier;
+        roadScrollSpeed = baseRoadScrollSpeed * effectiveMultiplier;
+        gateSpeed = roadScrollSpeed;
+        carSpeed = baseCarSpeed * effectiveMultiplier;
         return;
       }
       
@@ -624,33 +644,40 @@
         }
       }
       
+      // Recalculate speeds continuously during gameplay.
+      effectiveMultiplier = difficultyMultiplier * (1 + currentLevelIndex * 0.1);
+      roadScrollSpeed = baseRoadScrollSpeed * effectiveMultiplier;
+      gateSpeed = roadScrollSpeed;
+      carSpeed = baseCarSpeed * effectiveMultiplier;
+      
+      // Scale car movement by deltaTime with reduced sensitivity for smoother controls.
       if (gameState === "playing") {
         if (keys["ArrowLeft"]) {
-          carX -= carSpeed;
+          carX -= lateralSensitivity * carSpeed * (deltaTime / 16);
           if (carX < roadX) carX = roadX;
         }
         if (keys["ArrowRight"]) {
-          carX += carSpeed;
+          carX += lateralSensitivity * carSpeed * (deltaTime / 16);
           if (carX > roadX + roadWidth - carWidth) {
             carX = roadX + roadWidth - carWidth;
           }
         }
       }
       
-      roadScroll += roadScrollSpeed;
-      if (roadScroll >= dashHeight + dashGap) {
-        roadScroll = 0;
-      }
+      // Scale road scrolling by deltaTime.
+      roadScroll += roadScrollSpeed * (deltaTime / 16);
+      roadScroll = roadScroll % (dashHeight + dashGap);
       
       if (gameState === "playing") {
         if (!currentGateSet && currentSetIndex < setsPerLevel) {
           currentGateSet = spawnGateSet();
         }
         if (currentGateSet) {
-          currentGateSet.y += gateSpeed;
+          // Scale gate movement by deltaTime.
+          currentGateSet.y += gateSpeed * (deltaTime / 16);
           for (let gate of currentGateSet.gates) {
             if (rectanglesIntersect(carX, carY, carWidth, carHeight,
-                                    gate.x, currentGateSet.y, gateWidth, gateHeight)) {
+                                     gate.x, currentGateSet.y, gateWidth, gateHeight)) {
               let correct = levels[currentLevelIndex].correctAnswers[currentSetIndex];
               if (gate.text === correct) {
                 spawnExplosion(gate.x + gateWidth / 2, currentGateSet.y + gateHeight / 2);
@@ -687,6 +714,11 @@
 
     // Draw loop
     function draw() {
+      // Clear the canvas during gameplay to let the star trails fade out.
+      if (gameState !== "title" && gameState !== "difficulty") {
+        ctx.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+      }
+      
       // Title screen
       if (gameState === "title") {
         ctx.save();
@@ -712,7 +744,7 @@
         return;
       }
       
-      // Difficulty selection screen with slider
+      // Difficulty selection screen with slider.
       if (gameState === "difficulty") {
         ctx.save();
         ctx.fillStyle = "black";
@@ -728,14 +760,14 @@
         ctx.font = "50px Arial";
         ctx.textAlign = "center";
         ctx.fillText("Select Difficulty", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 100);
-        // Draw slider line
+        // Draw slider line.
         ctx.strokeStyle = "white";
         ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(sliderX, sliderY);
         ctx.lineTo(sliderX + sliderWidth, sliderY);
         ctx.stroke();
-        // Draw tick marks and labels for 1-10
+        // Draw tick marks and labels for 1-10.
         ctx.fillStyle = "white";
         ctx.font = "16px Arial";
         for (let i = 0; i < 10; i++) {
@@ -746,25 +778,28 @@
           ctx.stroke();
           ctx.fillText((i + 1).toString(), tickX, sliderY + 30);
         }
-        // Draw slider knob
+        // Draw slider knob.
         let knobX = sliderX + ((sliderValue - 1) / 9) * sliderWidth;
         ctx.fillStyle = "white";
         ctx.beginPath();
         ctx.arc(knobX, sliderY, sliderKnobRadius, 0, Math.PI * 2);
         ctx.fill();
-        // Instruction text
+        // Instruction text.
         ctx.fillStyle = "white";
         ctx.font = "20px Arial";
         ctx.fillText("Press Enter to Begin", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 80);
+        // Display the current speed multiplier for a live preview.
+        let currentMultiplier = 1 + (sliderValue - 1) * 0.1;
+        ctx.fillText("Speed Multiplier: " + currentMultiplier.toFixed(1), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 120);
         ctx.restore();
         return;
       }
 
-      // In-game drawing
+      // In-game drawing.
       ctx.save();
-      // Draw starfield background (with trails)
+      // Draw starfield background (with trails).
       drawStars();
-      // Draw road
+      // Draw road.
       drawRoad();
       if (currentGateSet) {
         drawGateSet(currentGateSet);
@@ -775,28 +810,41 @@
         drawCar();
       }
       drawExplosions();
+
+      // Draw Score Tally in a Box.
+      ctx.save();
+      ctx.fillStyle = "#222"; // Box background color.
+      ctx.fillRect(10, 10, 140, 40);
+      ctx.strokeStyle = "#fff";
+      ctx.strokeRect(10, 10, 140, 40);
       ctx.fillStyle = "#fff";
       ctx.font = "20px Arial";
       ctx.textAlign = "left";
-      ctx.fillText("Score: " + score, 10, 30);
+      ctx.fillText("Score: " + score, 20, 38);
+      ctx.restore();
+
       if (startLevelTime > 0 && gameState === "playing") {
         ctx.fillStyle = "#fff";
         ctx.font = "48px Arial";
         ctx.textAlign = "center";
         ctx.fillText(levels[currentLevelIndex].levelName, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
       }
+      
+      // Display final score prominently when game is over or won.
       if (gameWon) {
         ctx.fillStyle = "#fff";
         ctx.font = "48px Arial";
         ctx.textAlign = "center";
-        ctx.fillText("Optime!!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        ctx.fillText("Optime!!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30);
+        ctx.fillText("Score: " + score, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 30);
         drawConfetti();
       }
       if (gameOver && !gameWon) {
         ctx.fillStyle = "#fff";
         ctx.font = "48px Arial";
         ctx.textAlign = "center";
-        ctx.fillText("BOOM! Game Over", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        ctx.fillText("BOOM! Game Over", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30);
+        ctx.fillText("Score: " + score, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 30);
       }
       ctx.restore();
     }
