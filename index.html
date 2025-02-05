@@ -21,10 +21,21 @@
     canvas {
       border: 2px solid #000;
     }
-    /* Moved the Play Again button to 80% from the top and centered it horizontally */
+    /* Play Again button */
     #playAgain {
       position: absolute;
       top: 80%;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      font-size: 20px;
+      display: none;
+      z-index: 10;
+    }
+    /* Change Difficulty button */
+    #changeDifficulty {
+      position: absolute;
+      top: 90%;
       left: 50%;
       transform: translateX(-50%);
       padding: 10px 20px;
@@ -47,6 +58,7 @@
   <canvas id="gameCanvas" width="800" height="800"></canvas>
   <div id="message"></div>
   <button id="playAgain">Play Again</button>
+  <button id="changeDifficulty">Change Difficulty</button>
   <script>
     // Get canvas and context
     const canvas = document.getElementById('gameCanvas');
@@ -360,6 +372,13 @@
 
     // Play Again button handler
     document.getElementById("playAgain").addEventListener("click", () => resetGame(true));
+    // Change Difficulty button handler: go to difficulty screen.
+    document.getElementById("changeDifficulty").addEventListener("click", () => {
+      gameState = "difficulty";
+      document.getElementById("playAgain").style.display = "none";
+      document.getElementById("changeDifficulty").style.display = "none";
+      document.getElementById("message").innerText = "";
+    });
 
     // Helper for rectangle intersection
     function rectanglesIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
@@ -576,6 +595,7 @@
       startLevelTime = 500;
       levelTransitionTime = 0;
       document.getElementById("playAgain").style.display = "none";
+      document.getElementById("changeDifficulty").style.display = "none";
       document.getElementById("message").innerText = "";
       lastTime = performance.now();
       initConfetti();
@@ -837,7 +857,6 @@
         ctx.textAlign = "center";
         ctx.fillText("Optime!!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30);
         ctx.fillText("Score: " + score, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 30);
-        drawConfetti();
       }
       if (gameOver && !gameWon) {
         ctx.fillStyle = "#fff";
@@ -855,8 +874,10 @@
       lastTime = now;
       update(deltaTime);
       draw();
+      // If game is over or won, show both buttons.
       if (gameOver || gameWon) {
         document.getElementById("playAgain").style.display = "block";
+        document.getElementById("changeDifficulty").style.display = "block";
       }
       requestAnimationFrame(gameLoop);
     }
