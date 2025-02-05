@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Latin Declension Racing Game</title>
+  <style>
+    /* Basic styling for body, canvas, and UI elements */
+    body {
+      margin: 0;
+      background-color: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      position: relative;
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      border: 2px solid #000;
+    }
+    #playAgain {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 10px 20px;
+      font-size: 20px;
+      display: none;
+      z-index: 10;
+    }
+    #message {
+      position: absolute;
+      top: 30%;
+      font-size: 48px;
+      color: #fff;
+      text-align: center;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas for the game -->
+  <canvas id="gameCanvas" width="800" height="800"></canvas>
+  <div id="message"></div>
+  <button id="playAgain">Play Again</button>
+  <script>
+    // Get canvas and context
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const SCREEN_WIDTH = canvas.width;
+    const SCREEN_HEIGHT = canvas.height;
+
+    // --- Starfield Background and Trails ---
+    let stars = [];
+    const numStars = 100;
+    let starTrails = [];         // Array to hold trail points for stars
+    const starTrailLifetime = 500; // Trail lifetime in ms
+
+    function initStars() {
+      stars = [];
+      for (let i = 0; i < numStars; i++) {
+        stars.push({
+          x: Math.random() * SCREEN_WIDTH,
+          y: Math.random() * SCREEN_HEIGHT,
+          size: Math.random() * 2 + 1,
+          speed: Math.random() * 0.5 + 0.2
+        });
+      }
+    }
+    
+    function updateStars(deltaTime) {
+      stars.forEach(star => {
+        // Update star position
+        star.y += star.speed * (deltaTime / 16);
+        if (star.y > SCREEN_HEIGHT) {
+          star.y = 0;
+          star.x = Math.random() * SCREEN_WIDTH;
+        }
+        // Add current star position as a new trail point
+        starTrails.push({ x: star.x, y: star.y, age: 0, size: star.size });
+      });
+      // Update and remove old trail points
+      for (let i = starTrails.length - 1; i >= 0; i--) {
+        starTrails[i].age += deltaTime;
+        if (starTrails[i].age > starTrailLifetime) {
+          starTrails.splice(i, 1);
+        }
+      }
+    }
+    
+    function drawStars() {
+      // Draw star trails with fading alpha.
+      ctx.save();
+      starTrails.forEach(trail => {
+        let alpha = 1 - (trail.age / starTrailLifetime);
+        ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
+        ctx.beginPath();
+        ctx.arc(trail.x, trail.y, trail.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+      // Draw current stars
+      ctx.save();
+      ctx.fillStyle = "white";
+      stars.forEach(star => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    // Create a parchment-style pattern (used on title/difficulty screens)
+    function createParchmentPattern() {
+      let offCanvas = document.createElement('canvas');
+      offCanvas.width = 100;
+      offCanvas.height = 100;
+      let offCtx = offCanvas.getContext('2d');
+      offCtx.fillStyle = "#f3e5ab";
+      offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+      for (let i = 0; i < 200; i++) {
+        let x = Math.random() * offCanvas.width;
+        let y = Math.random() * offCanvas.height;
+        let radius = Math.random() * 1.5;
+        offCtx.fillStyle = "rgba(210,180,140,0.3)";
+        offCtx.beginPath();
+        offCtx.arc(x, y, radius, 0, Math.PI * 2);
+        offCtx.fill();
+      }
+      return ctx.createPattern(offCanvas, 'repeat');
+    }
+    const parchmentPattern = createParchmentPattern();
+
+    // LEVEL DEFINITIONS
+    const levels = [
+      { levelName: "1st Declension", correctAnswers: ["a", "ae", "ae", "am", "a", "ae", "arum", "is", "as", "is"] },
+      { levelName: "2nd Declension", correctAnswers: ["us", "i", "o", "um", "o", "i", "orum", "is", "os", "is"] },
+      { levelName: "2nd Declension Neuter", correctAnswers: ["um", "i", "o", "um", "o", "a", "orum", "is", "a", "is"] },
+      { levelName: "3rd Declension", correctAnswers: ["*", "is", "i", "em", "e", "es", "um", "ibus", "es", "ibus"] },
+      { levelName: "3rd Declension Neuter", correctAnswers: ["*", "is", "i", "*", "e", "a", "um", "ibus", "a", "ibus"] },
+      { levelName: "4th Declension", correctAnswers: ["us", "us", "ui", "um", "u", "us", "uum", "ibus", "ua", "ibus"] },
+      { levelName: "4th Declension Neuter", correctAnswers: ["u", "us", "u", "u", "u", "ua", "uum", "ibus", "ua", "ibus"] },
+      { levelName: "5th Declension", correctAnswers: ["es", "ei", "ei", "em", "e", "es", "erum", "ebus", "es", "ebus"] }
+    ];
+    let currentLevelIndex = 0;
+    const setsPerLevel = 10;
+    let currentSetIndex = 0;
+
+    // Difficulty and scoring
+    let difficulty = 1;
+    let difficultyMultiplier = 1;  // = 1 + (difficulty - 1)*0.1
+    const baseScorePerGate = 10;
+
+    // Base speeds and multipliers
+    const baseCarSpeed = 8;
+    const baseRoadScrollSpeed = 5;
+    let levelMultiplier = 1;
+    let effectiveMultiplier = 1;
+
+    // Game speeds
+    let carSpeed = baseCarSpeed;
+    let roadScrollSpeed = baseRoadScrollSpeed;
+    let gateSpeed = roadScrollSpeed;
+
+    // Game state variables
+    let score = 0;
+    let gameOver = false;
+    let gameWon = false;
+    // Game states: "title", "difficulty", "countdown", "playing", "transition"
+    let gameState = "title";
+    let countdownTime = 3000;  // 3-second countdown
+    let startLevelTime = 500;
+    let levelTransitionTime = 0;
+    let lastTime = performance.now();
+
+    // Difficulty slider variables
+    let sliderValue = 5;
+    const sliderWidth = 300;
+    const sliderX = (SCREEN_WIDTH - sliderWidth) / 2;
+    const sliderY = SCREEN_HEIGHT / 2 + 20;
+    const sliderKnobRadius = 15;
+    let isDraggingSlider = false;
+
+    // Car properties
+    const carWidth = 40;
+    const carHeight = 80;
+    let carX = SCREEN_WIDTH / 2 - carWidth / 2;
+    const carY = SCREEN_HEIGHT - carHeight - 10;
+
+    // Road properties
+    const roadWidth = 400;
+    const roadX = (SCREEN_WIDTH - roadWidth) / 2;
+    const roadColor = "#1e1e1e";
+
+    // Dashed center line properties
+    const dashWidth = 10;
+    const dashHeight = 60;
+    const dashGap = 40;
+    let roadScroll = 0;
+
+    // Gate properties
+    const numGates = 5;
+    const gateWidth = 60;
+    const gateHeight = 60;
+
+    // Explosion particles
+    let explosionParticles = [];
+    function spawnExplosion(x, y) {
+      const numParticles = 30;
+      for (let i = 0; i < numParticles; i++) {
+        explosionParticles.push({
+          x: x,
+          y: y,
+          vx: (Math.random() - 0.5) * 200,
+          vy: (Math.random() - 0.5) * 200,
+          life: 0,
+          maxLife: 500 + Math.random() * 500,
+          color: "hsl(" + Math.floor(Math.random() * 360) + ", 100%, 50%)",
+          radius: 2 + Math.random() * 3
+        });
+      }
+    }
+    function spawnCrashExplosion(x, y) {
+      const numParticles = 100;
+      for (let i = 0; i < numParticles; i++) {
+        explosionParticles.push({
+          x: x,
+          y: y,
+          vx: (Math.random() - 0.5) * 300,
+          vy: (Math.random() - 0.5) * 300,
+          life: 0,
+          maxLife: 800 + Math.random() * 400,
+          color: "hsl(" + Math.floor(Math.random() * 360) + ", 100%, 50%)",
+          radius: 2 + Math.random() * 3
+        });
+      }
+    }
+
+    // Car pieces explosion system
+    let carPieces = [];
+    function spawnCarPieces(x, y) {
+      const numPieces = 15;
+      carPieces = [];
+      for (let i = 0; i < numPieces; i++) {
+        carPieces.push({
+          x: x + (Math.random() - 0.5) * carWidth,
+          y: y + (Math.random() - 0.5) * carHeight,
+          vx: (Math.random() - 0.5) * 400,
+          vy: (Math.random() - 0.5) * 400,
+          angle: Math.random() * Math.PI * 2,
+          angularVelocity: (Math.random() - 0.5) * 10,
+          width: 10 + Math.random() * 10,
+          height: 10 + Math.random() * 10,
+          color: "#c00"
+        });
+      }
+    }
+
+    // Camera shake variables
+    let crashShakeTime = 0;
+    const crashShakeDuration = 1000;
+    const crashShakeMagnitude = 10;
+    function triggerCrashEffect(x, y) {
+      crashShakeTime = crashShakeDuration;
+      spawnCrashExplosion(x, y);
+      spawnCarPieces(carX + carWidth / 2, carY + carHeight / 2);
+    }
+
+    // Pulsating glow for effects
+    function getGlowValue() {
+      return 4 + 3 * Math.abs(Math.sin(performance.now() / 500));
+    }
+
+    // Current gate set object
+    let currentGateSet = null;
+
+    // --- Additional Visual Enhancements ---
+    // Car shadow: Draw an ellipse beneath the car.
+    function drawCarShadow() {
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+      ctx.beginPath();
+      ctx.ellipse(carX + carWidth / 2, carY + carHeight, carWidth / 1.5, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    // --- End Additional Enhancements ---
+
+    // Key input tracking and slider dragging for difficulty state.
+    const keys = {};
+    document.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+      if (gameState === "title" && e.key === "Enter") {
+        gameState = "difficulty";
+      } else if (gameState === "difficulty" && e.key === "Enter") {
+        difficulty = sliderValue;
+        resetGame(false); // Use sliderValue as difficulty.
+      }
+    });
+    document.addEventListener("keyup", (e) => { keys[e.key] = false; });
+
+    // Mouse events for slider dragging.
+    canvas.addEventListener("mousedown", (e) => {
+      if (gameState === "difficulty") {
+        let pos = getMousePos(e);
+        let knobX = sliderX + ((sliderValue - 1) / 9) * sliderWidth;
+        let knobY = sliderY;
+        let dx = pos.x - knobX;
+        let dy = pos.y - knobY;
+        if (Math.sqrt(dx * dx + dy * dy) <= sliderKnobRadius) {
+          isDraggingSlider = true;
+        }
+      }
+    });
+    canvas.addEventListener("mousemove", (e) => {
+      if (gameState === "difficulty" && isDraggingSlider) {
+        let pos = getMousePos(e);
+        let clampedX = Math.max(sliderX, Math.min(pos.x, sliderX + sliderWidth));
+        sliderValue = Math.round(1 + ((clampedX - sliderX) / sliderWidth) * 9);
+      }
+    });
+    canvas.addEventListener("mouseup", (e) => {
+      if (gameState === "difficulty") {
+        isDraggingSlider = false;
+      }
+    });
+    canvas.addEventListener("mouseleave", (e) => {
+      if (gameState === "difficulty") {
+        isDraggingSlider = false;
+      }
+    });
+    function getMousePos(evt) {
+      let rect = canvas.getBoundingClientRect();
+      return {
+        x: evt.clientX - rect.left,
+        y: evt.clientY - rect.top
+      };
+    }
+
+    // Play Again button handler
+    document.getElementById("playAgain").addEventListener("click", () => resetGame(true));
+
+    // Helper for rectangle intersection
+    function rectanglesIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
+      return !(x2 > x1 + w1 ||
+               x2 + w2 < x1 ||
+               y2 > y1 + h1 ||
+               y2 + h2 < y1);
+    }
+
+    function getPoolForLevel(levelIndex) {
+      const arr = levels[levelIndex].correctAnswers;
+      return [...new Set(arr)];
+    }
+
+    function spawnGateSet() {
+      const y = -100;
+      const sectionWidth = roadWidth / numGates;
+      const correct = levels[currentLevelIndex].correctAnswers[currentSetIndex];
+      let gateOptions = [correct];
+      let pool = getPoolForLevel(currentLevelIndex);
+      let possible = pool.filter(e => e !== correct);
+      possible.sort(() => Math.random() - 0.5);
+      gateOptions = gateOptions.concat(possible.slice(0, 4));
+      gateOptions.sort(() => Math.random() - 0.5);
+      let gates = [];
+      for (let i = 0; i < numGates; i++) {
+        let centerX = roadX + sectionWidth * i + sectionWidth / 2;
+        let gateX = centerX - gateWidth / 2;
+        gates.push({ x: gateX, text: gateOptions[i] });
+      }
+      return { gates: gates, y: y };
+    }
+
+    function drawBackground() {
+      // For title and difficulty screens, we use the parchment pattern.
+      ctx.fillStyle = parchmentPattern;
+      ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    }
+
+    // Draw the road with dashed center lines.
+    function drawRoad() {
+      ctx.fillStyle = roadColor;
+      ctx.fillRect(roadX, 0, roadWidth, SCREEN_HEIGHT);
+      ctx.fillStyle = "#fff";
+      let y = roadScroll;
+      while (y < SCREEN_HEIGHT) {
+        ctx.fillRect(SCREEN_WIDTH / 2 - dashWidth / 2, y, dashWidth, dashHeight);
+        y += dashHeight + dashGap;
+      }
+    }
+
+    // Draw the car (if it hasn't exploded) with its shadow.
+    function drawCar() {
+      ctx.save();
+      drawCarShadow();
+      ctx.translate(carX, carY);
+      ctx.fillStyle = "#c00";
+      ctx.strokeStyle = "#800";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, carHeight * 0.8);
+      ctx.lineTo(carWidth * 0.2, carHeight * 0.3);
+      ctx.lineTo(carWidth * 0.5, carHeight * 0.15);
+      ctx.lineTo(carWidth * 0.8, carHeight * 0.3);
+      ctx.lineTo(carWidth, carHeight * 0.8);
+      ctx.quadraticCurveTo(carWidth * 0.9, carHeight, carWidth * 0.7, carHeight);
+      ctx.lineTo(carWidth * 0.3, carHeight);
+      ctx.quadraticCurveTo(carWidth * 0.1, carHeight, 0, carHeight * 0.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.moveTo(carWidth * 0.35, carHeight * 0.3);
+      ctx.lineTo(carWidth * 0.45, carHeight * 0.2);
+      ctx.lineTo(carWidth * 0.55, carHeight * 0.2);
+      ctx.lineTo(carWidth * 0.65, carHeight * 0.3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#333";
+      ctx.beginPath();
+      ctx.arc(carWidth * 0.3, carHeight, carWidth * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(carWidth * 0.7, carHeight, carWidth * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Update car pieces movement
+    function updateCarPieces(deltaTime) {
+      carPieces.forEach(piece => {
+        piece.x += piece.vx * (deltaTime / 1000);
+        piece.y += piece.vy * (deltaTime / 1000);
+        piece.angle += piece.angularVelocity * (deltaTime / 1000);
+      });
+    }
+
+    // Draw car pieces (if the car has exploded)
+    function drawCarPieces() {
+      carPieces.forEach(piece => {
+        ctx.save();
+        ctx.translate(piece.x, piece.y);
+        ctx.rotate(piece.angle);
+        ctx.fillStyle = piece.color;
+        ctx.fillRect(-piece.width / 2, -piece.height / 2, piece.width, piece.height);
+        ctx.restore();
+      });
+    }
+
+    function drawGateSet(gateSet) {
+      let glow = getGlowValue();
+      for (let gate of gateSet.gates) {
+        let grad = ctx.createLinearGradient(gate.x, gateSet.y, gate.x, gateSet.y + gateHeight);
+        grad.addColorStop(0, "#fff");
+        grad.addColorStop(0.5, "#aaf");
+        grad.addColorStop(1, "#fff");
+        ctx.save();
+        ctx.shadowColor = "rgba(255,255,255,0.4)";
+        ctx.shadowBlur = glow;
+        ctx.fillStyle = grad;
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const radius = 5;
+        ctx.moveTo(gate.x + radius, gateSet.y);
+        ctx.lineTo(gate.x + gateWidth - radius, gateSet.y);
+        ctx.quadraticCurveTo(gate.x + gateWidth, gateSet.y, gate.x + gateWidth, gateSet.y + radius);
+        ctx.lineTo(gate.x + gateWidth, gateSet.y + gateHeight - radius);
+        ctx.quadraticCurveTo(gate.x + gateWidth, gateSet.y + gateHeight, gate.x + gateWidth - radius, gateSet.y + gateHeight);
+        ctx.lineTo(gate.x + radius, gateSet.y + gateHeight);
+        ctx.quadraticCurveTo(gate.x, gateSet.y + gateHeight, gate.x, gateSet.y + gateHeight - radius);
+        ctx.lineTo(gate.x, gateSet.y + radius);
+        ctx.quadraticCurveTo(gate.x, gateSet.y, gate.x + radius, gateSet.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = "#000";
+        ctx.font = "24px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(gate.text, gate.x + gateWidth / 2, gateSet.y + gateHeight / 2);
+      }
+    }
+
+    function updateExplosions(deltaTime) {
+      for (let i = explosionParticles.length - 1; i >= 0; i--) {
+        let p = explosionParticles[i];
+        p.life += deltaTime;
+        p.x += p.vx * (deltaTime / 1000);
+        p.y += p.vy * (deltaTime / 1000);
+        if (p.life > p.maxLife) {
+          explosionParticles.splice(i, 1);
+        }
+      }
+    }
+    function drawExplosions() {
+      explosionParticles.forEach(p => {
+        let alpha = 1 - (p.life / p.maxLife);
+        ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('hsl', 'hsla');
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    let confettiParticles = [];
+    function initConfetti() {
+      confettiParticles = [];
+      for (let i = 0; i < 100; i++) {
+        confettiParticles.push({
+          x: Math.random() * SCREEN_WIDTH,
+          y: Math.random() * SCREEN_HEIGHT,
+          radius: Math.random() * 4 + 2,
+          color: "hsl(" + Math.floor(Math.random() * 360) + ", 100%, 50%)",
+          speedY: Math.random() * 3 + 2
+        });
+      }
+    }
+    function drawConfetti() {
+      confettiParticles.forEach(particle => {
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+        ctx.fillStyle = particle.color;
+        ctx.fill();
+        particle.y += particle.speedY;
+        if (particle.y > SCREEN_HEIGHT) {
+          particle.y = 0;
+          particle.x = Math.random() * SCREEN_WIDTH;
+        }
+      });
+    }
+
+    // Modified resetGame: uses sliderValue as difficulty.
+    function resetGame(shouldPrompt = true) {
+      difficulty = sliderValue;
+      difficultyMultiplier = 1 + (difficulty - 1) * 0.1;
+      currentLevelIndex = 0;
+      levelMultiplier = 1 + currentLevelIndex * 0.1;
+      effectiveMultiplier = difficultyMultiplier * levelMultiplier;
+      carSpeed = baseCarSpeed * effectiveMultiplier;
+      roadScrollSpeed = baseRoadScrollSpeed * effectiveMultiplier;
+      gateSpeed = roadScrollSpeed;
+      score = 0;
+      gameOver = false;
+      gameWon = false;
+      currentGateSet = null;
+      currentSetIndex = 0;
+      carX = SCREEN_WIDTH / 2 - carWidth / 2;
+      gameState = "countdown";
+      countdownTime = 3000;
+      startLevelTime = 500;
+      levelTransitionTime = 0;
+      document.getElementById("playAgain").style.display = "none";
+      document.getElementById("message").innerText = "";
+      lastTime = performance.now();
+      initConfetti();
+      initStars();
+      explosionParticles = [];
+      crashShakeTime = 0;
+      carPieces = [];
+    }
+
+    // Update loop
+    function update(deltaTime) {
+      // For title and difficulty screens, update starfield only.
+      if (gameState === "title" || gameState === "difficulty") {
+        updateStars(deltaTime);
+        return;
+      }
+      
+      updateStars(deltaTime);
+      
+      if (gameState === "countdown") {
+        countdownTime -= deltaTime;
+        if (countdownTime > 2000) {
+          document.getElementById("message").innerText = "Ready";
+        } else if (countdownTime > 1000) {
+          document.getElementById("message").innerText = "Set";
+        } else if (countdownTime > 0) {
+          document.getElementById("message").innerText = "Go!";
+        } else {
+          document.getElementById("message").innerText = "";
+          gameState = "playing";
+          startLevelTime = 500;
+        }
+      }
+      
+      if (gameState === "transition") {
+        levelTransitionTime -= deltaTime;
+        document.getElementById("message").innerText = levels[currentLevelIndex].levelName;
+        drawConfetti();
+        if (levelTransitionTime <= 0) {
+          gameState = "playing";
+          startLevelTime = 500;
+          document.getElementById("message").innerText = "";
+          levelMultiplier = 1 + currentLevelIndex * 0.1;
+          effectiveMultiplier = difficultyMultiplier * levelMultiplier;
+          carSpeed = baseCarSpeed * effectiveMultiplier;
+          roadScrollSpeed = baseRoadScrollSpeed * effectiveMultiplier;
+          gateSpeed = roadScrollSpeed;
+        }
+        return;
+      }
+      
+      if (gameOver || gameWon) {
+        updateExplosions(deltaTime);
+        updateCarPieces(deltaTime);
+        if (crashShakeTime > 0) {
+          crashShakeTime -= deltaTime;
+        }
+        return;
+      }
+      
+      if (startLevelTime > 0) {
+        startLevelTime -= deltaTime;
+        if (startLevelTime <= 0) {
+          document.getElementById("message").innerText = "";
+        }
+      }
+      
+      if (gameState === "playing") {
+        if (keys["ArrowLeft"]) {
+          carX -= carSpeed;
+          if (carX < roadX) carX = roadX;
+        }
+        if (keys["ArrowRight"]) {
+          carX += carSpeed;
+          if (carX > roadX + roadWidth - carWidth) {
+            carX = roadX + roadWidth - carWidth;
+          }
+        }
+      }
+      
+      roadScroll += roadScrollSpeed;
+      if (roadScroll >= dashHeight + dashGap) {
+        roadScroll = 0;
+      }
+      
+      if (gameState === "playing") {
+        if (!currentGateSet && currentSetIndex < setsPerLevel) {
+          currentGateSet = spawnGateSet();
+        }
+        if (currentGateSet) {
+          currentGateSet.y += gateSpeed;
+          for (let gate of currentGateSet.gates) {
+            if (rectanglesIntersect(carX, carY, carWidth, carHeight,
+                                    gate.x, currentGateSet.y, gateWidth, gateHeight)) {
+              let correct = levels[currentLevelIndex].correctAnswers[currentSetIndex];
+              if (gate.text === correct) {
+                spawnExplosion(gate.x + gateWidth / 2, currentGateSet.y + gateHeight / 2);
+                score += Math.round(baseScorePerGate * effectiveMultiplier);
+                currentSetIndex++;
+                currentGateSet = null;
+                if (currentSetIndex >= setsPerLevel) {
+                  if (currentLevelIndex < levels.length - 1) {
+                    gameState = "transition";
+                    levelTransitionTime = 3000;
+                    currentLevelIndex++;
+                    currentSetIndex = 0;
+                    currentGateSet = null;
+                    initConfetti();
+                  } else {
+                    gameWon = true;
+                    initConfetti();
+                  }
+                }
+              } else {
+                triggerCrashEffect(gate.x + gateWidth / 2, currentGateSet.y + gateHeight / 2);
+                gameOver = true;
+              }
+              break;
+            }
+          }
+          if (currentGateSet && currentGateSet.y > SCREEN_HEIGHT) {
+            gameOver = true;
+          }
+        }
+      }
+      updateExplosions(deltaTime);
+    }
+
+    // Draw loop
+    function draw() {
+      // Title screen
+      if (gameState === "title") {
+        ctx.save();
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        let gradient = ctx.createLinearGradient(0, 0, SCREEN_WIDTH, 0);
+        gradient.addColorStop(0, "red");
+        gradient.addColorStop(0.2, "orange");
+        gradient.addColorStop(0.4, "yellow");
+        gradient.addColorStop(0.6, "green");
+        gradient.addColorStop(0.8, "blue");
+        gradient.addColorStop(1, "purple");
+        ctx.fillStyle = gradient;
+        ctx.font = "80px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Declension Racer", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 50);
+        ctx.fillStyle = "white";
+        ctx.font = "30px Arial";
+        ctx.fillText("by Magister Cornish", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        ctx.font = "20px Arial";
+        ctx.fillText("Press Enter to continue", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 50);
+        ctx.restore();
+        return;
+      }
+      
+      // Difficulty selection screen with slider
+      if (gameState === "difficulty") {
+        ctx.save();
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        let grad = ctx.createLinearGradient(0, 0, SCREEN_WIDTH, 0);
+        grad.addColorStop(0, "red");
+        grad.addColorStop(0.2, "orange");
+        grad.addColorStop(0.4, "yellow");
+        grad.addColorStop(0.6, "green");
+        grad.addColorStop(0.8, "blue");
+        grad.addColorStop(1, "purple");
+        ctx.fillStyle = grad;
+        ctx.font = "50px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Select Difficulty", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 100);
+        // Draw slider line
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(sliderX, sliderY);
+        ctx.lineTo(sliderX + sliderWidth, sliderY);
+        ctx.stroke();
+        // Draw tick marks and labels for 1-10
+        ctx.fillStyle = "white";
+        ctx.font = "16px Arial";
+        for (let i = 0; i < 10; i++) {
+          let tickX = sliderX + (i / 9) * sliderWidth;
+          ctx.beginPath();
+          ctx.moveTo(tickX, sliderY - 10);
+          ctx.lineTo(tickX, sliderY + 10);
+          ctx.stroke();
+          ctx.fillText((i + 1).toString(), tickX, sliderY + 30);
+        }
+        // Draw slider knob
+        let knobX = sliderX + ((sliderValue - 1) / 9) * sliderWidth;
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(knobX, sliderY, sliderKnobRadius, 0, Math.PI * 2);
+        ctx.fill();
+        // Instruction text
+        ctx.fillStyle = "white";
+        ctx.font = "20px Arial";
+        ctx.fillText("Press Enter to Begin", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 80);
+        ctx.restore();
+        return;
+      }
+
+      // In-game drawing
+      ctx.save();
+      // Draw starfield background (with trails)
+      drawStars();
+      // Draw road
+      drawRoad();
+      if (currentGateSet) {
+        drawGateSet(currentGateSet);
+      }
+      if (gameOver && carPieces.length > 0) {
+        drawCarPieces();
+      } else {
+        drawCar();
+      }
+      drawExplosions();
+      ctx.fillStyle = "#fff";
+      ctx.font = "20px Arial";
+      ctx.textAlign = "left";
+      ctx.fillText("Score: " + score, 10, 30);
+      if (startLevelTime > 0 && gameState === "playing") {
+        ctx.fillStyle = "#fff";
+        ctx.font = "48px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(levels[currentLevelIndex].levelName, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+      }
+      if (gameWon) {
+        ctx.fillStyle = "#fff";
+        ctx.font = "48px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Optime!!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        drawConfetti();
+      }
+      if (gameOver && !gameWon) {
+        ctx.fillStyle = "#fff";
+        ctx.font = "48px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("BOOM! Game Over", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+      }
+      ctx.restore();
+    }
+
+    function gameLoop() {
+      let now = performance.now();
+      let deltaTime = now - lastTime;
+      lastTime = now;
+      update(deltaTime);
+      draw();
+      if (gameOver || gameWon) {
+        document.getElementById("playAgain").style.display = "block";
+      }
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Start the game loop. Initially, gameState is "title".
+    initStars();
+    gameLoop();
+  </script>
+</body>
+</html>
